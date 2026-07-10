@@ -46,10 +46,25 @@ export function useChats(uid: string | undefined) {
       };
     }
 
+    let settled = false;
+    // Safety net: if Firestore is silently blocked (ad blocker / tracking
+    // prevention swallows the request without an error callback), don't
+    // hang forever — fall back to local storage after a few seconds.
+    const timeout = window.setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        console.warn("Firestore chats listener timed out, using local storage fallback");
+        loadLocally();
+        window.addEventListener("louis-chats-updated", handleUpdate);
+      }
+    }, 5000);
+
     const q = query(collection(db, "users", uid, "chats"), orderBy("updatedAt", "desc"));
     const unsub = onSnapshot(
       q,
       (snap) => {
+        settled = true;
+        window.clearTimeout(timeout);
         const list: ChatSummary[] = snap.docs.map((d) => {
           const data = d.data() as any;
           return {
@@ -64,6 +79,8 @@ export function useChats(uid: string | undefined) {
         setLoading(false);
       },
       (err) => {
+        settled = true;
+        window.clearTimeout(timeout);
         console.warn("Firestore chats listener failed, using local storage fallback", err);
         loadLocally();
         window.addEventListener("louis-chats-updated", handleUpdate);
@@ -71,6 +88,7 @@ export function useChats(uid: string | undefined) {
     );
 
     return () => {
+      window.clearTimeout(timeout);
       unsub();
       window.removeEventListener("louis-chats-updated", handleUpdate);
     };
