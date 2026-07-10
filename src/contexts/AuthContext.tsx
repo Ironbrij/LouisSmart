@@ -1,15 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signInWithPopup,
-  signOut as fbSignOut,
-  sendPasswordResetEmail,
-  updateProfile,
-  type User,
-} from "firebase/auth";
-import { auth, googleProvider, firebaseReady } from "@/lib/firebase";
+import type { User } from "@supabase/supabase-js";
+import { supabase, supabaseReady } from "@/lib/supabase";
 
 interface AuthContextValue {
   user: User | null;
@@ -29,64 +20,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!firebaseReady) {
+    if (!supabaseReady) {
       setLoading(false);
       return;
     }
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
+
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null);
       setLoading(false);
     });
-    return unsub;
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => listener.subscription.unsubscribe();
   }, []);
 
   const value: AuthContextValue = {
     user,
     loading,
-    ready: firebaseReady,
+    ready: supabaseReady,
     async signIn(email, password) {
-      try {
-        await signInWithEmailAndPassword(auth, email, password);
-      } catch (err) {
-        console.warn("Firebase signIn failed, falling back to mock authentication", err);
-        setUser({
-          uid: "mock-uid-123",
-          email: email,
-          displayName: email.split("@")[0],
-        } as any);
-      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
     },
     async signUp(email, password, name) {
-      try {
-        const cred = await createUserWithEmailAndPassword(auth, email, password);
-        if (name) await updateProfile(cred.user, { displayName: name });
-      } catch (err) {
-        console.warn("Firebase signUp failed, falling back to mock authentication", err);
-        setUser({
-          uid: "mock-uid-123",
-          email: email,
-          displayName: name || email.split("@")[0],
-        } as any);
-      }
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: name ? { data: { display_name: name } } : undefined,
+      });
+      if (error) throw error;
     },
     async signInGoogle() {
-      if (!firebaseReady) {
-        throw new Error("Google Sign-In requires Firebase to be configured with VITE_FIREBASE_* environment variables.");
+      if (!supabaseReady) {
+        throw new Error("Google Sign-In requires Supabase to be configured with VITE_SUPABASE_* environment variables.");
       }
-      await signInWithPopup(auth, googleProvider);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.origin + "/app" },
+      });
+      if (error) throw error;
     },
     async resetPassword(email) {
-      if (firebaseReady) {
-        await sendPasswordResetEmail(auth, email);
+      if (supabaseReady) {
+        const { error } = await supabase.auth.resetPasswordForEmail(email);
+        if (error) throw error;
       }
     },
     async signOut() {
-      if (firebaseReady) {
-        try {
-          await fbSignOut(auth);
-        } catch {
-          // ignore
-        }
+      if (supabaseReady) {
+        await supabase.auth.signOut();
       }
       setUser(null);
     },

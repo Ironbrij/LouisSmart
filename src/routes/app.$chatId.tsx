@@ -24,7 +24,7 @@ function ChatPage() {
   const { chatId } = Route.useParams();
   const { initial } = useSearch({ from: "/app/$chatId" });
   const navigate = useNavigate();
-  const { messages, sendMessage, generating, stopGenerating } = useMessages(user?.uid, chatId);
+  const { messages, sendMessage, generating, stopGenerating } = useMessages(user?.id, chatId);
   const [seed, setSeed] = useState<string | undefined>();
   const sentRef = useRef<string | null>(null);
 

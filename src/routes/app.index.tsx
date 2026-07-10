@@ -14,7 +14,7 @@ function AppHome() {
   const { user } = useAuth();
   const navigate = useNavigate();
   // No active chat yet; this composer starts a new chat on send.
-  const noop = useMessages(user?.uid, undefined);
+  const noop = useMessages(user?.id, undefined);
 
   function handleSend(text: string, image: File | null) {
     const id = uuid();

@@ -1,18 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  doc,
-  setDoc,
-  deleteDoc,
-  updateDoc,
-  getDocs,
-  writeBatch,
-  serverTimestamp,
-} from "firebase/firestore";
-import { db, firebaseReady } from "@/lib/firebase";
+import { supabase, supabaseReady } from "@/lib/supabase";
 import type { ChatSummary } from "@/lib/types";
 
 export function useChats(uid: string | undefined) {
@@ -22,85 +9,79 @@ export function useChats(uid: string | undefined) {
   const loadLocally = useCallback(() => {
     try {
       const stored = localStorage.getItem("louis-chats-list");
-      if (stored) {
-        setChats(JSON.parse(stored));
-      } else {
-        setChats([]);
-      }
+      setChats(stored ? JSON.parse(stored) : []);
     } catch (e) {
       console.error("failed to load local chats list", e);
     }
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    const handleUpdate = () => {
-      loadLocally();
-    };
+  const fromRow = (row: any): ChatSummary => ({
+    id: row.id,
+    title: row.title || "New Chat",
+    lastMessage: row.last_message || "",
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+    updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
+  });
 
-    if (!uid || !firebaseReady || uid === "mock-uid-123") {
+  useEffect(() => {
+    const handleUpdate = () => loadLocally();
+
+    if (!uid || !supabaseReady || uid === "mock-uid-123") {
       loadLocally();
       window.addEventListener("louis-chats-updated", handleUpdate);
-      return () => {
-        window.removeEventListener("louis-chats-updated", handleUpdate);
-      };
+      return () => window.removeEventListener("louis-chats-updated", handleUpdate);
     }
 
-    let settled = false;
-    // Safety net: if Firestore is silently blocked (ad blocker / tracking
-    // prevention swallows the request without an error callback), don't
-    // hang forever — fall back to local storage after a few seconds.
-    const timeout = window.setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        console.warn("Firestore chats listener timed out, using local storage fallback");
-        loadLocally();
-        window.addEventListener("louis-chats-updated", handleUpdate);
-      }
-    }, 5000);
+    let cancelled = false;
 
-    const q = query(collection(db, "users", uid, "chats"), orderBy("updatedAt", "desc"));
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        settled = true;
-        window.clearTimeout(timeout);
-        const list: ChatSummary[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            title: data.title || "New Chat",
-            lastMessage: data.lastMessage || "",
-            createdAt: data.createdAt?.toMillis?.() ?? Date.now(),
-            updatedAt: data.updatedAt?.toMillis?.() ?? Date.now(),
-          };
-        });
-        setChats(list);
-        setLoading(false);
-      },
-      (err) => {
-        settled = true;
-        window.clearTimeout(timeout);
-        console.warn("Firestore chats listener failed, using local storage fallback", err);
+    const fetchInitial = async () => {
+      const { data, error } = await supabase
+        .from("chats")
+        .select("*")
+        .eq("user_id", uid)
+        .order("updated_at", { ascending: false });
+
+      if (cancelled) return;
+      if (error) {
+        console.warn("Supabase chats fetch failed, using local storage fallback", error);
         loadLocally();
         window.addEventListener("louis-chats-updated", handleUpdate);
-      },
-    );
+        return;
+      }
+      setChats((data || []).map(fromRow));
+      setLoading(false);
+    };
+
+    fetchInitial();
+
+    const channel = supabase
+      .channel(`chats-${uid}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "chats", filter: `user_id=eq.${uid}` },
+        () => {
+          // Simplest correct approach: re-fetch on any change rather than
+          // hand-patching local state from the payload.
+          fetchInitial();
+        },
+      )
+      .subscribe();
 
     return () => {
-      window.clearTimeout(timeout);
-      unsub();
+      cancelled = true;
+      supabase.removeChannel(channel);
       window.removeEventListener("louis-chats-updated", handleUpdate);
     };
   }, [uid, loadLocally]);
 
   const renameChat = useCallback(
     async (chatId: string, title: string) => {
-      if (!uid || !firebaseReady || uid === "mock-uid-123") {
+      if (!uid || !supabaseReady || uid === "mock-uid-123") {
         try {
           const stored = localStorage.getItem("louis-chats-list");
           if (stored) {
-            let list = JSON.parse(stored);
+            const list = JSON.parse(stored);
             const index = list.findIndex((c: any) => c.id === chatId);
             if (index >= 0) {
               list[index].title = title;
@@ -114,22 +95,21 @@ export function useChats(uid: string | undefined) {
         }
         return;
       }
-      try {
-        await updateDoc(doc(db, "users", uid, "chats", chatId), { title, updatedAt: serverTimestamp() });
-      } catch (err) {
-        console.error("Firestore rename failed", err);
-      }
+      const { error } = await supabase
+        .from("chats")
+        .update({ title, updated_at: new Date().toISOString() })
+        .eq("id", chatId);
+      if (error) console.error("Supabase rename failed", error);
     },
     [uid],
   );
 
   const deleteChat = useCallback(
     async (chatId: string) => {
-      // 1. Always delete from local storage
       try {
         const stored = localStorage.getItem("louis-chats-list");
         if (stored) {
-          let list = JSON.parse(stored);
+          const list = JSON.parse(stored);
           const filtered = list.filter((c: any) => c.id !== chatId);
           localStorage.setItem("louis-chats-list", JSON.stringify(filtered));
         }
@@ -139,24 +119,16 @@ export function useChats(uid: string | undefined) {
         console.error("failed to local delete", e);
       }
 
-      // 2. If firebase is active and not mock, also attempt to delete from Firestore
-      if (uid && firebaseReady && uid !== "mock-uid-123") {
-        try {
-          const msgs = await getDocs(collection(db, "users", uid, "chats", chatId, "messages"));
-          const batch = writeBatch(db);
-          msgs.forEach((m) => batch.delete(m.ref));
-          batch.delete(doc(db, "users", uid, "chats", chatId));
-          await batch.commit();
-        } catch (err) {
-          console.error("Firestore delete failed", err);
-        }
+      if (uid && supabaseReady && uid !== "mock-uid-123") {
+        // messages cascade-delete via the FK constraint (ON DELETE CASCADE)
+        const { error } = await supabase.from("chats").delete().eq("id", chatId);
+        if (error) console.error("Supabase delete failed", error);
       }
     },
     [uid],
   );
 
   const deleteAllChats = useCallback(async () => {
-    // 1. Always delete all from local storage
     try {
       const stored = localStorage.getItem("louis-chats-list");
       if (stored) {
@@ -169,29 +141,18 @@ export function useChats(uid: string | undefined) {
       console.error("failed to local delete all", e);
     }
 
-    // 2. If firebase is active and not mock, also attempt to delete from Firestore
-    if (uid && firebaseReady && uid !== "mock-uid-123") {
-      try {
-        const snap = await getDocs(collection(db, "users", uid, "chats"));
-        for (const c of snap.docs) {
-          const msgs = await getDocs(collection(db, "users", uid, "chats", c.id, "messages"));
-          const batch = writeBatch(db);
-          msgs.forEach((m) => batch.delete(m.ref));
-          batch.delete(c.ref);
-          await batch.commit();
-        }
-      } catch (err) {
-        console.error("Firestore delete all failed", err);
-      }
+    if (uid && supabaseReady && uid !== "mock-uid-123") {
+      const { error } = await supabase.from("chats").delete().eq("user_id", uid);
+      if (error) console.error("Supabase delete all failed", error);
     }
   }, [uid]);
 
   const ensureChat = useCallback(
     async (chatId: string, title?: string) => {
-      if (!uid || !firebaseReady || uid === "mock-uid-123") {
+      if (!uid || !supabaseReady || uid === "mock-uid-123") {
         try {
           const stored = localStorage.getItem("louis-chats-list");
-          let list = stored ? JSON.parse(stored) : [];
+          const list = stored ? JSON.parse(stored) : [];
           const existing = list.find((c: any) => c.id === chatId);
           if (!existing) {
             list.unshift({
@@ -209,19 +170,15 @@ export function useChats(uid: string | undefined) {
         }
         return;
       }
-      try {
-        await setDoc(
-          doc(db, "users", uid, "chats", chatId),
-          {
-            title: title || "New Chat",
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
-      } catch (err) {
-        console.error("Firestore ensureChat failed", err);
-      }
+      const { error } = await supabase.from("chats").upsert(
+        {
+          id: chatId,
+          user_id: uid,
+          title: title || "New Chat",
+        },
+        { onConflict: "id", ignoreDuplicates: true },
+      );
+      if (error) console.error("Supabase ensureChat failed", error);
     },
     [uid],
   );

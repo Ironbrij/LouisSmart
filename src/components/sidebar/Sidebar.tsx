@@ -45,7 +45,7 @@ interface Props {
 
 export function Sidebar({ collapsed, onToggle, onClose }: Props) {
   const { user, signOut } = useAuth();
-  const { chats, renameChat, deleteChat, deleteAllChats } = useChats(user?.uid);
+  const { chats, renameChat, deleteChat, deleteAllChats } = useChats(user?.id);
   const [search, setSearch] = useState("");
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -214,15 +214,15 @@ export function Sidebar({ collapsed, onToggle, onClose }: Props) {
                 className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-medium shrink-0 overflow-hidden"
                 style={{ background: "var(--gradient-primary)" }}
               >
-                {user?.photoURL ? (
-                  <img src={user.photoURL} className="w-full h-full object-cover" alt="" />
+                {user?.user_metadata?.avatar_url ? (
+                  <img src={user.user_metadata.avatar_url} className="w-full h-full object-cover" alt="" />
                 ) : (
-                  (user?.displayName || user?.email || "?").charAt(0).toUpperCase()
+                  (user?.user_metadata?.full_name || user?.email || "?").charAt(0).toUpperCase()
                 )}
               </div>
               {!collapsed && (
                 <div className="flex-1 text-left overflow-hidden">
-                  <div className="text-sm font-medium truncate">{user?.displayName || "User"}</div>
+                  <div className="text-sm font-medium truncate">{user?.user_metadata?.full_name || "User"}</div>
                   <div className="text-[11px] text-muted-foreground truncate">{user?.email}</div>
                 </div>
               )}

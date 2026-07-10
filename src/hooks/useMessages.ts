@@ -1,18 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  addDoc,
-  doc,
-  setDoc,
-  updateDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { ref as sref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { v4 as uuid } from "uuid";
-import { db, storage, firebaseReady } from "@/lib/firebase";
+import { supabase, supabaseReady } from "@/lib/supabase";
 import type { ChatMessage } from "@/lib/types";
 import { streamAiReply } from "@/lib/webhook";
 
@@ -21,9 +9,16 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  // Optimistic local messages (before Firestore round-trip / while streaming)
   const localRef = useRef<ChatMessage[]>([]);
   const [localTick, setLocalTick] = useState(0);
+
+  const fromRow = (row: any): ChatMessage => ({
+    id: row.id,
+    role: row.role,
+    content: row.content,
+    attachments: row.attachments || [],
+    timestamp: row.timestamp ? new Date(row.timestamp).getTime() : Date.now(),
+  });
 
   useEffect(() => {
     localRef.current = [];
@@ -33,63 +28,51 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
     const loadLocally = () => {
       try {
         const stored = localStorage.getItem(`louis-chat-${chatId}`);
-        if (stored) {
-          setMessages(JSON.parse(stored));
-        } else {
-          setMessages([]);
-        }
+        setMessages(stored ? JSON.parse(stored) : []);
       } catch (e) {
         console.error("Local storage load failed", e);
       }
       setLoading(false);
     };
 
-    if (!uid || !firebaseReady) {
+    if (!uid || !supabaseReady) {
       loadLocally();
       return;
     }
 
-    let settled = false;
-    // Safety net: if Firestore is silently blocked (ad blocker / tracking
-    // prevention swallows the request without an error callback), don't
-    // hang forever — fall back to local storage after a few seconds.
-    const timeout = window.setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        console.warn("Firestore messages listener timed out, using local storage fallback");
-        loadLocally();
-      }
-    }, 5000);
+    let cancelled = false;
 
-    const q = query(collection(db, "users", uid, "chats", chatId, "messages"), orderBy("timestamp", "asc"));
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        settled = true;
-        window.clearTimeout(timeout);
-        const list: ChatMessage[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            role: data.role,
-            content: data.content,
-            attachments: data.attachments || [],
-            timestamp: data.timestamp?.toMillis?.() ?? Date.now(),
-          };
-        });
-        setMessages(list);
-        setLoading(false);
-      },
-      (err) => {
-        settled = true;
-        window.clearTimeout(timeout);
-        console.warn("Firestore listener failed, using local storage fallback", err);
+    const fetchInitial = async () => {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("chat_id", chatId)
+        .order("timestamp", { ascending: true });
+
+      if (cancelled) return;
+      if (error) {
+        console.warn("Supabase messages fetch failed, using local storage fallback", error);
         loadLocally();
-      },
-    );
+        return;
+      }
+      setMessages((data || []).map(fromRow));
+      setLoading(false);
+    };
+
+    fetchInitial();
+
+    const channel = supabase
+      .channel(`messages-${chatId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "messages", filter: `chat_id=eq.${chatId}` },
+        () => fetchInitial(),
+      )
+      .subscribe();
+
     return () => {
-      window.clearTimeout(timeout);
-      unsub();
+      cancelled = true;
+      supabase.removeChannel(channel);
     };
   }, [uid, chatId]);
 
@@ -97,10 +80,11 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
     async (file: File): Promise<{ url: string; type: string; name: string }> => {
       if (!uid || !chatId) throw new Error("Not ready");
       const id = uuid();
-      const r = sref(storage, `users/${uid}/chats/${chatId}/${id}-${file.name}`);
-      await uploadBytes(r, file);
-      const url = await getDownloadURL(r);
-      return { url, type: file.type, name: file.name };
+      const path = `${uid}/${chatId}/${id}-${file.name}`;
+      const { error } = await supabase.storage.from("chat-uploads").upload(path, file);
+      if (error) throw error;
+      const { data } = supabase.storage.from("chat-uploads").getPublicUrl(path);
+      return { url: data.publicUrl, type: file.type, name: file.name };
     },
     [uid, chatId],
   );
@@ -114,7 +98,7 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
       let attachments: ChatMessage["attachments"] = [];
       if (image) {
         try {
-          if (uid && firebaseReady) {
+          if (uid && supabaseReady) {
             const up = await uploadImage(image);
             attachments = [up];
           } else {
@@ -125,71 +109,56 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
         }
       }
 
-      // Generate local messages for tracking
       const userMsgId = uuid();
-      const userMsg: ChatMessage = {
-        id: userMsgId,
-        role: "user",
-        content: trimmed,
-        attachments,
-        timestamp: Date.now(),
-      };
-
+      const userMsg: ChatMessage = { id: userMsgId, role: "user", content: trimmed, attachments, timestamp: Date.now() };
       const assistantMsgId = uuid();
-      const assistantMsg: ChatMessage = {
-        id: assistantMsgId,
-        role: "assistant",
-        content: "",
-        timestamp: Date.now(),
-      };
+      const assistantMsg: ChatMessage = { id: assistantMsgId, role: "assistant", content: "", timestamp: Date.now() };
 
-      let useFirestore = Boolean(uid && firebaseReady && uid !== "mock-uid-123");
-      let assistantDocRef: any = null;
-      let chatDocRef: any = null;
+      let useSupabase = Boolean(uid && supabaseReady && uid !== "mock-uid-123");
+      let assistantRowId: string = assistantMsgId;
 
-      if (useFirestore) {
+      if (useSupabase) {
         try {
-          chatDocRef = doc(db, "users", uid!, "chats", chatId);
-          await setDoc(
-            chatDocRef,
+          await supabase.from("chats").upsert(
             {
+              id: chatId,
+              user_id: uid,
               title: trimmed ? trimmed.slice(0, 48) : "New Chat",
-              lastMessage: trimmed,
-              updatedAt: serverTimestamp(),
-              createdAt: serverTimestamp(),
+              last_message: trimmed,
+              updated_at: new Date().toISOString(),
             },
-            { merge: true },
+            { onConflict: "id" },
           );
 
-          await addDoc(collection(chatDocRef, "messages"), {
+          await supabase.from("messages").insert({
+            chat_id: chatId,
             role: "user",
             content: trimmed,
             attachments,
-            timestamp: serverTimestamp(),
           });
 
-          assistantDocRef = await addDoc(collection(chatDocRef, "messages"), {
-            role: "assistant",
-            content: "",
-            timestamp: serverTimestamp(),
-          });
+          const { data: assistantRow, error: assistantErr } = await supabase
+            .from("messages")
+            .insert({ chat_id: chatId, role: "assistant", content: "" })
+            .select()
+            .single();
+          if (assistantErr) throw assistantErr;
+          assistantRowId = assistantRow.id;
         } catch (err) {
-          console.warn("Firestore write failed, falling back to local storage", err);
-          useFirestore = false;
+          console.warn("Supabase write failed, falling back to local storage", err);
+          useSupabase = false;
         }
       }
 
-      if (!useFirestore) {
+      if (!useSupabase) {
         setMessages((prev) => {
           const updated = [...prev, userMsg];
           localStorage.setItem(`louis-chat-${chatId}`, JSON.stringify(updated));
           return updated;
         });
-
-        // Also update chats list summary in localStorage!
         try {
           const stored = localStorage.getItem("louis-chats-list");
-          let list = stored ? JSON.parse(stored) : [];
+          const list = stored ? JSON.parse(stored) : [];
           const existingIndex = list.findIndex((c: any) => c.id === chatId);
           const chatSummary = {
             id: chatId,
@@ -198,11 +167,8 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
             updatedAt: Date.now(),
             createdAt: existingIndex >= 0 ? list[existingIndex].createdAt : Date.now(),
           };
-          if (existingIndex >= 0) {
-            list[existingIndex] = chatSummary;
-          } else {
-            list.unshift(chatSummary);
-          }
+          if (existingIndex >= 0) list[existingIndex] = chatSummary;
+          else list.unshift(chatSummary);
           localStorage.setItem("louis-chats-list", JSON.stringify(list));
           window.dispatchEvent(new Event("louis-chats-updated"));
         } catch (e) {
@@ -215,8 +181,7 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
       abortRef.current = ctrl;
 
       let buffer = "";
-      const targetAssistantId = useFirestore ? assistantDocRef.id : assistantMsgId;
-      localRef.current = [{ id: targetAssistantId, role: "assistant", content: "", timestamp: Date.now(), streaming: true }];
+      localRef.current = [{ id: assistantRowId, role: "assistant", content: "", timestamp: Date.now(), streaming: true }];
       setLocalTick((t) => t + 1);
 
       try {
@@ -234,7 +199,7 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
             signal: ctrl.signal,
             onToken: (chunk) => {
               buffer += chunk;
-              localRef.current = [{ id: targetAssistantId, role: "assistant", content: buffer, timestamp: Date.now(), streaming: true }];
+              localRef.current = [{ id: assistantRowId, role: "assistant", content: buffer, timestamp: Date.now(), streaming: true }];
               setLocalTick((t) => t + 1);
             },
           },
@@ -244,29 +209,26 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
           buffer += `\n\n_Error: ${e.message || "failed to reach webhook"}_`;
         }
       } finally {
-        if (useFirestore) {
+        if (useSupabase) {
           try {
-            await updateDoc(assistantDocRef, { content: buffer, timestamp: serverTimestamp() });
-            await setDoc(chatDocRef, { lastMessage: buffer.slice(0, 120), updatedAt: serverTimestamp() }, { merge: true });
+            await supabase.from("messages").update({ content: buffer }).eq("id", assistantRowId);
+            await supabase
+              .from("chats")
+              .update({ last_message: buffer.slice(0, 120), updated_at: new Date().toISOString() })
+              .eq("id", chatId);
           } catch (err) {
-            console.error("Failed to update Firestore assistant message", err);
+            console.error("Failed to update Supabase assistant message", err);
           }
         } else {
-          const finalAssistantMsg: ChatMessage = {
-            ...assistantMsg,
-            content: buffer,
-            timestamp: Date.now(),
-          };
+          const finalAssistantMsg: ChatMessage = { ...assistantMsg, content: buffer, timestamp: Date.now() };
           setMessages((prev) => {
             const updated = [...prev, finalAssistantMsg];
             localStorage.setItem(`louis-chat-${chatId}`, JSON.stringify(updated));
             return updated;
           });
-
-          // Also update chats list summary with the assistant response
           try {
             const stored = localStorage.getItem("louis-chats-list");
-            let list = stored ? JSON.parse(stored) : [];
+            const list = stored ? JSON.parse(stored) : [];
             const existingIndex = list.findIndex((c: any) => c.id === chatId);
             if (existingIndex >= 0) {
               list[existingIndex].lastMessage = buffer.slice(0, 120);
