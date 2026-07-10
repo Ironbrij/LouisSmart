@@ -49,10 +49,24 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
       return;
     }
 
+    let settled = false;
+    // Safety net: if Firestore is silently blocked (ad blocker / tracking
+    // prevention swallows the request without an error callback), don't
+    // hang forever — fall back to local storage after a few seconds.
+    const timeout = window.setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        console.warn("Firestore messages listener timed out, using local storage fallback");
+        loadLocally();
+      }
+    }, 5000);
+
     const q = query(collection(db, "users", uid, "chats", chatId, "messages"), orderBy("timestamp", "asc"));
     const unsub = onSnapshot(
       q,
       (snap) => {
+        settled = true;
+        window.clearTimeout(timeout);
         const list: ChatMessage[] = snap.docs.map((d) => {
           const data = d.data() as any;
           return {
@@ -67,11 +81,16 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
         setLoading(false);
       },
       (err) => {
+        settled = true;
+        window.clearTimeout(timeout);
         console.warn("Firestore listener failed, using local storage fallback", err);
         loadLocally();
       },
     );
-    return unsub;
+    return () => {
+      window.clearTimeout(timeout);
+      unsub();
+    };
   }, [uid, chatId]);
 
   const uploadImage = useCallback(
