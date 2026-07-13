@@ -171,3 +171,29 @@
     radial-gradient(800px 400px at 90% 100%, color-mix(in oklab, var(--color-primary) 12%, transparent), transparent 60%);
   background-size: auto, auto;
 }
+
+/* Gentle upward drift for the floating auth-page bubbles.
+   Runs on the compositor thread via CSS, not React state, so it can't
+   compete with the main thread for input responsiveness. */
+@keyframes louis-bubble-float {
+  0% {
+    top: 105%;
+    transform: translate(-50%, -50%) translateX(0px);
+  }
+  50% {
+    transform: translate(-50%, -50%) translateX(8px);
+  }
+  100% {
+    top: -10%;
+    transform: translate(-50%, -50%) translateX(0px);
+  }
+}
+
+.louis-bubble-drift {
+  top: 105%;
+  animation-name: louis-bubble-float;
+  animation-duration: var(--drift-duration, 22s);
+  animation-delay: var(--drift-delay, 0s);
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
