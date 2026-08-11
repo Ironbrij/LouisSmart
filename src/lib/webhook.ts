@@ -17,15 +17,41 @@ export interface StreamOptions {
  * POSTs to VITE_WEBHOOK_URL and streams the response body as text chunks.
  * Supports plain streamed text or a JSON `{ reply: string }` fallback.
  */
+const REQUEST_TIMEOUT_MS = 45_000;
+
 export async function streamAiReply(payload: WebhookPayload, opts: StreamOptions): Promise<string> {
   const url = (import.meta.env.VITE_WEBHOOK_URL as string) || "https://vmi3182726.contaboserver.net/webhook/4f4322b3-30eb-4d63-b7ea-d9d18558772c";
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal: opts.signal,
-  });
+  // Combine the caller's abort signal (Stop button) with an internal timeout, so a
+  // webhook/n8n workflow that never responds doesn't leave the UI stuck "generating"
+  // forever with no feedback.
+  const timeoutCtrl = new AbortController();
+  const timeoutId = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS);
+  const onCallerAbort = () => timeoutCtrl.abort();
+  opts.signal?.addEventListener("abort", onCallerAbort);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: timeoutCtrl.signal,
+    });
+  } catch (e) {
+    if (opts.signal?.aborted) {
+      const abortErr = new Error("Aborted");
+      abortErr.name = "AbortError";
+      throw abortErr;
+    }
+    if (timeoutCtrl.signal.aborted) {
+      throw new Error(`No response from the AI after ${REQUEST_TIMEOUT_MS / 1000}s. Please try again.`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+    opts.signal?.removeEventListener("abort", onCallerAbort);
+  }
 
   if (!res.ok) throw new Error(`Webhook error ${res.status}`);
 
