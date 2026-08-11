@@ -1,8 +1,31 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { v4 as uuid } from "uuid";
-import { supabase, supabaseReady } from "@/lib/supabase";
+import {
+  collection,
+  doc,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  setDoc,
+  serverTimestamp,
+  Timestamp,
+  type QueryDocumentSnapshot,
+  type DocumentData,
+} from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage, firebaseReady } from "@/lib/firebase";
 import type { ChatMessage } from "@/lib/types";
 import { streamAiReply } from "@/lib/webhook";
+
+const MOCK_UID = "mock-uid-123";
+
+function toMillis(value: unknown): number {
+  if (value instanceof Timestamp) return value.toMillis();
+  return Date.now();
+}
 
 export function useMessages(uid: string | undefined, chatId: string | undefined) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -12,13 +35,16 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
   const localRef = useRef<ChatMessage[]>([]);
   const [localTick, setLocalTick] = useState(0);
 
-  const fromRow = (row: any): ChatMessage => ({
-    id: row.id,
-    role: row.role,
-    content: row.content,
-    attachments: row.attachments || [],
-    timestamp: row.timestamp ? new Date(row.timestamp).getTime() : Date.now(),
-  });
+  const fromDoc = (d: QueryDocumentSnapshot<DocumentData>): ChatMessage => {
+    const data = d.data();
+    return {
+      id: d.id,
+      role: data.role,
+      content: data.content,
+      attachments: data.attachments || [],
+      timestamp: toMillis(data.timestamp),
+    };
+  };
 
   useEffect(() => {
     localRef.current = [];
@@ -35,56 +61,38 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
       setLoading(false);
     };
 
-    if (!uid || !supabaseReady) {
+    if (!uid || !firebaseReady) {
       loadLocally();
       return;
     }
 
-    let cancelled = false;
+    setLoading(true);
+    const q = query(collection(db, "messages"), where("chat_id", "==", chatId), orderBy("timestamp", "asc"));
 
-    const fetchInitial = async () => {
-      const { data, error } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("chat_id", chatId)
-        .order("timestamp", { ascending: true });
-
-      if (cancelled) return;
-      if (error) {
-        console.warn("Supabase messages fetch failed, using local storage fallback", error);
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        setMessages(snap.docs.map(fromDoc));
+        setLoading(false);
+      },
+      (error) => {
+        console.warn("Firestore messages subscription failed, using local storage fallback", error);
         loadLocally();
-        return;
-      }
-      setMessages((data || []).map(fromRow));
-      setLoading(false);
-    };
+      },
+    );
 
-    fetchInitial();
-
-    const channel = supabase
-      .channel(`messages-${chatId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "messages", filter: `chat_id=eq.${chatId}` },
-        () => fetchInitial(),
-      )
-      .subscribe();
-
-    return () => {
-      cancelled = true;
-      supabase.removeChannel(channel);
-    };
+    return () => unsubscribe();
   }, [uid, chatId]);
 
   const uploadImage = useCallback(
     async (file: File): Promise<{ url: string; type: string; name: string }> => {
       if (!uid || !chatId) throw new Error("Not ready");
       const id = uuid();
-      const path = `${uid}/${chatId}/${id}-${file.name}`;
-      const { error } = await supabase.storage.from("chat-uploads").upload(path, file);
-      if (error) throw error;
-      const { data } = supabase.storage.from("chat-uploads").getPublicUrl(path);
-      return { url: data.publicUrl, type: file.type, name: file.name };
+      const path = `chat-uploads/${uid}/${chatId}/${id}-${file.name}`;
+      const storageRef = ref(storage, path);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      return { url, type: file.type, name: file.name };
     },
     [uid, chatId],
   );
@@ -98,7 +106,7 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
       let attachments: ChatMessage["attachments"] = [];
       if (image) {
         try {
-          if (uid && supabaseReady) {
+          if (uid && firebaseReady) {
             const up = await uploadImage(image);
             attachments = [up];
           } else {
@@ -114,43 +122,45 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
       const assistantMsgId = uuid();
       const assistantMsg: ChatMessage = { id: assistantMsgId, role: "assistant", content: "", timestamp: Date.now() };
 
-      let useSupabase = Boolean(uid && supabaseReady && uid !== "mock-uid-123");
+      let useFirestore = Boolean(uid && firebaseReady && uid !== MOCK_UID);
       let assistantRowId: string = assistantMsgId;
 
-      if (useSupabase) {
+      if (useFirestore) {
         try {
-          await supabase.from("chats").upsert(
+          await setDoc(
+            doc(db, "chats", chatId),
             {
-              id: chatId,
               user_id: uid,
               title: trimmed ? trimmed.slice(0, 48) : "New Chat",
               last_message: trimmed,
-              updated_at: new Date().toISOString(),
+              updated_at: serverTimestamp(),
             },
-            { onConflict: "id" },
+            { merge: true },
           );
 
-          await supabase.from("messages").insert({
+          await addDoc(collection(db, "messages"), {
             chat_id: chatId,
             role: "user",
             content: trimmed,
             attachments,
+            timestamp: serverTimestamp(),
           });
 
-          const { data: assistantRow, error: assistantErr } = await supabase
-            .from("messages")
-            .insert({ chat_id: chatId, role: "assistant", content: "" })
-            .select()
-            .single();
-          if (assistantErr) throw assistantErr;
-          assistantRowId = assistantRow.id;
+          const assistantRef = await addDoc(collection(db, "messages"), {
+            chat_id: chatId,
+            role: "assistant",
+            content: "",
+            attachments: [],
+            timestamp: serverTimestamp(),
+          });
+          assistantRowId = assistantRef.id;
         } catch (err) {
-          console.warn("Supabase write failed, falling back to local storage", err);
-          useSupabase = false;
+          console.warn("Firestore write failed, falling back to local storage", err);
+          useFirestore = false;
         }
       }
 
-      if (!useSupabase) {
+      if (!useFirestore) {
         setMessages((prev) => {
           const updated = [...prev, userMsg];
           localStorage.setItem(`louis-chat-${chatId}`, JSON.stringify(updated));
@@ -209,15 +219,15 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
           buffer += `\n\n_Error: ${e.message || "failed to reach webhook"}_`;
         }
       } finally {
-        if (useSupabase) {
+        if (useFirestore) {
           try {
-            await supabase.from("messages").update({ content: buffer }).eq("id", assistantRowId);
-            await supabase
-              .from("chats")
-              .update({ last_message: buffer.slice(0, 120), updated_at: new Date().toISOString() })
-              .eq("id", chatId);
+            await updateDoc(doc(db, "messages", assistantRowId), { content: buffer });
+            await updateDoc(doc(db, "chats", chatId), {
+              last_message: buffer.slice(0, 120),
+              updated_at: serverTimestamp(),
+            });
           } catch (err) {
-            console.error("Failed to update Supabase assistant message", err);
+            console.error("Failed to update Firestore assistant message", err);
           }
         } else {
           const finalAssistantMsg: ChatMessage = { ...assistantMsg, content: buffer, timestamp: Date.now() };
