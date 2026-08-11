@@ -1,6 +1,30 @@
 import { useEffect, useState, useCallback } from "react";
-import { supabase, supabaseReady } from "@/lib/supabase";
+import {
+  collection,
+  doc,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  serverTimestamp,
+  Timestamp,
+  type QueryDocumentSnapshot,
+  type DocumentData,
+} from "firebase/firestore";
+import { db, firebaseReady } from "@/lib/firebase";
 import type { ChatSummary } from "@/lib/types";
+
+const MOCK_UID = "mock-uid-123";
+
+function toMillis(value: unknown): number {
+  if (value instanceof Timestamp) return value.toMillis();
+  return Date.now();
+}
 
 export function useChats(uid: string | undefined) {
   const [chats, setChats] = useState<ChatSummary[]>([]);
@@ -16,68 +40,51 @@ export function useChats(uid: string | undefined) {
     setLoading(false);
   }, []);
 
-  const fromRow = (row: any): ChatSummary => ({
-    id: row.id,
-    title: row.title || "New Chat",
-    lastMessage: row.last_message || "",
-    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-    updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
-  });
+  const fromDoc = (d: QueryDocumentSnapshot<DocumentData>): ChatSummary => {
+    const data = d.data();
+    return {
+      id: d.id,
+      title: data.title || "New Chat",
+      lastMessage: data.last_message || "",
+      createdAt: toMillis(data.created_at),
+      updatedAt: toMillis(data.updated_at),
+    };
+  };
 
   useEffect(() => {
     const handleUpdate = () => loadLocally();
 
-    if (!uid || !supabaseReady || uid === "mock-uid-123") {
+    if (!uid || !firebaseReady || uid === MOCK_UID) {
       loadLocally();
       window.addEventListener("louis-chats-updated", handleUpdate);
       return () => window.removeEventListener("louis-chats-updated", handleUpdate);
     }
 
-    let cancelled = false;
+    setLoading(true);
+    const q = query(collection(db, "chats"), where("user_id", "==", uid), orderBy("updated_at", "desc"));
 
-    const fetchInitial = async () => {
-      const { data, error } = await supabase
-        .from("chats")
-        .select("*")
-        .eq("user_id", uid)
-        .order("updated_at", { ascending: false });
-
-      if (cancelled) return;
-      if (error) {
-        console.warn("Supabase chats fetch failed, using local storage fallback", error);
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        setChats(snap.docs.map(fromDoc));
+        setLoading(false);
+      },
+      (error) => {
+        console.warn("Firestore chats subscription failed, using local storage fallback", error);
         loadLocally();
         window.addEventListener("louis-chats-updated", handleUpdate);
-        return;
-      }
-      setChats((data || []).map(fromRow));
-      setLoading(false);
-    };
-
-    fetchInitial();
-
-    const channel = supabase
-      .channel(`chats-${uid}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "chats", filter: `user_id=eq.${uid}` },
-        () => {
-          // Simplest correct approach: re-fetch on any change rather than
-          // hand-patching local state from the payload.
-          fetchInitial();
-        },
-      )
-      .subscribe();
+      },
+    );
 
     return () => {
-      cancelled = true;
-      supabase.removeChannel(channel);
+      unsubscribe();
       window.removeEventListener("louis-chats-updated", handleUpdate);
     };
   }, [uid, loadLocally]);
 
   const renameChat = useCallback(
     async (chatId: string, title: string) => {
-      if (!uid || !supabaseReady || uid === "mock-uid-123") {
+      if (!uid || !firebaseReady || uid === MOCK_UID) {
         try {
           const stored = localStorage.getItem("louis-chats-list");
           if (stored) {
@@ -95,11 +102,11 @@ export function useChats(uid: string | undefined) {
         }
         return;
       }
-      const { error } = await supabase
-        .from("chats")
-        .update({ title, updated_at: new Date().toISOString() })
-        .eq("id", chatId);
-      if (error) console.error("Supabase rename failed", error);
+      try {
+        await updateDoc(doc(db, "chats", chatId), { title, updated_at: serverTimestamp() });
+      } catch (e) {
+        console.error("Firestore rename failed", e);
+      }
     },
     [uid],
   );
@@ -119,10 +126,15 @@ export function useChats(uid: string | undefined) {
         console.error("failed to local delete", e);
       }
 
-      if (uid && supabaseReady && uid !== "mock-uid-123") {
-        // messages cascade-delete via the FK constraint (ON DELETE CASCADE)
-        const { error } = await supabase.from("chats").delete().eq("id", chatId);
-        if (error) console.error("Supabase delete failed", error);
+      if (uid && firebaseReady && uid !== MOCK_UID) {
+        try {
+          // Firestore has no cascade delete — remove the chat's messages first.
+          const msgsSnap = await getDocs(query(collection(db, "messages"), where("chat_id", "==", chatId)));
+          await Promise.all(msgsSnap.docs.map((m) => deleteDoc(m.ref)));
+          await deleteDoc(doc(db, "chats", chatId));
+        } catch (e) {
+          console.error("Firestore delete failed", e);
+        }
       }
     },
     [uid],
@@ -141,15 +153,23 @@ export function useChats(uid: string | undefined) {
       console.error("failed to local delete all", e);
     }
 
-    if (uid && supabaseReady && uid !== "mock-uid-123") {
-      const { error } = await supabase.from("chats").delete().eq("user_id", uid);
-      if (error) console.error("Supabase delete all failed", error);
+    if (uid && firebaseReady && uid !== MOCK_UID) {
+      try {
+        const chatsSnap = await getDocs(query(collection(db, "chats"), where("user_id", "==", uid)));
+        for (const chatDoc of chatsSnap.docs) {
+          const msgsSnap = await getDocs(query(collection(db, "messages"), where("chat_id", "==", chatDoc.id)));
+          await Promise.all(msgsSnap.docs.map((m) => deleteDoc(m.ref)));
+          await deleteDoc(chatDoc.ref);
+        }
+      } catch (e) {
+        console.error("Firestore delete all failed", e);
+      }
     }
   }, [uid]);
 
   const ensureChat = useCallback(
     async (chatId: string, title?: string) => {
-      if (!uid || !supabaseReady || uid === "mock-uid-123") {
+      if (!uid || !firebaseReady || uid === MOCK_UID) {
         try {
           const stored = localStorage.getItem("louis-chats-list");
           const list = stored ? JSON.parse(stored) : [];
@@ -170,15 +190,21 @@ export function useChats(uid: string | undefined) {
         }
         return;
       }
-      const { error } = await supabase.from("chats").upsert(
-        {
-          id: chatId,
-          user_id: uid,
-          title: title || "New Chat",
-        },
-        { onConflict: "id", ignoreDuplicates: true },
-      );
-      if (error) console.error("Supabase ensureChat failed", error);
+      try {
+        const ref = doc(db, "chats", chatId);
+        const existing = await getDoc(ref);
+        if (!existing.exists()) {
+          await setDoc(ref, {
+            user_id: uid,
+            title: title || "New Chat",
+            last_message: "",
+            created_at: serverTimestamp(),
+            updated_at: serverTimestamp(),
+          });
+        }
+      } catch (e) {
+        console.error("Firestore ensureChat failed", e);
+      }
     },
     [uid],
   );
