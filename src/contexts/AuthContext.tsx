@@ -1,9 +1,46 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import type { User } from "@supabase/supabase-js";
-import { supabase, supabaseReady } from "@/lib/supabase";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
+  sendPasswordResetEmail,
+  signOut as firebaseSignOut,
+  updateProfile,
+  type User as FirebaseUser,
+} from "firebase/auth";
+import { auth, firebaseReady } from "@/lib/firebase";
+
+/**
+ * Normalized user shape. The rest of the app (Sidebar, routes) was built
+ * against Supabase's User object (`id`, `user_metadata.{full_name,avatar_url}`),
+ * so we map Firebase's `uid`/`displayName`/`photoURL` onto that same shape
+ * here rather than touching every call site.
+ */
+export interface AppUser {
+  id: string;
+  email: string | null;
+  user_metadata: {
+    full_name?: string | null;
+    avatar_url?: string | null;
+  };
+}
+
+function toAppUser(u: FirebaseUser | null): AppUser | null {
+  if (!u) return null;
+  return {
+    id: u.uid,
+    email: u.email,
+    user_metadata: {
+      full_name: u.displayName,
+      avatar_url: u.photoURL,
+    },
+  };
+}
 
 interface AuthContextValue {
-  user: User | null;
+  user: AppUser | null;
   loading: boolean;
   ready: boolean;
   signIn: (email: string, password: string) => Promise<void>;
@@ -16,63 +53,50 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!supabaseReady) {
+    if (!firebaseReady) {
       setLoading(false);
       return;
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(toAppUser(firebaseUser));
       setLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-
-    return () => listener.subscription.unsubscribe();
+    return () => unsubscribe();
   }, []);
 
   const value: AuthContextValue = {
     user,
     loading,
-    ready: supabaseReady,
+    ready: firebaseReady,
     async signIn(email, password) {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      await signInWithEmailAndPassword(auth, email, password);
     },
     async signUp(email, password, name) {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: name ? { data: { display_name: name } } : undefined,
-      });
-      if (error) throw error;
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      if (name) {
+        await updateProfile(cred.user, { displayName: name });
+      }
     },
     async signInGoogle() {
-      if (!supabaseReady) {
-        throw new Error("Google Sign-In requires Supabase to be configured with VITE_SUPABASE_* environment variables.");
+      if (!firebaseReady) {
+        throw new Error("Google Sign-In requires Firebase to be configured with VITE_FIREBASE_* environment variables.");
       }
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: window.location.origin + "/app" },
-      });
-      if (error) throw error;
+      await signInWithPopup(auth, new GoogleAuthProvider());
     },
     async resetPassword(email) {
-      if (supabaseReady) {
-        const { error } = await supabase.auth.resetPasswordForEmail(email);
-        if (error) throw error;
+      if (firebaseReady) {
+        await sendPasswordResetEmail(auth, email);
       }
     },
     async signOut() {
-      if (supabaseReady) {
-        await supabase.auth.signOut();
+      if (firebaseReady) {
+        await firebaseSignOut(auth);
       }
       setUser(null);
     },
