@@ -1,58 +1,42 @@
-import React, { useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
-import { useChats } from "@/hooks/useChats";
-import { useMessages } from "@/hooks/useMessages";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { v4 as uuid } from "uuid";
+import { useAuth } from "@/contexts/AuthContext";
+import { AppShell } from "@/components/layout/AppShell";
 import { EmptyState } from "@/components/chat/EmptyState";
 import { Composer } from "@/components/chat/Composer";
+import { useMessages } from "@/hooks/useMessages";
 
-export function AppIndexPage() {
+export const Route = createFileRoute("/app/")({
+  component: AppHome,
+});
+
+function AppHome() {
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const { createChat } = useChats();
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // No active chat yet; this composer starts a new chat on send.
+  const noop = useMessages(user?.id, undefined);
 
-  const handleInitialSend = async (messageText: string) => {
-    if (!messageText.trim() || isSubmitting) return;
-
-    try {
-      setIsSubmitting(true);
-
-      // 1. Create new chat session in storage/database
-      const newChat = await createChat(messageText.slice(0, 30));
-      
-      if (!newChat || !newChat.id) {
-        throw new Error("Could not initialize chat session.");
-      }
-
-      // 2. Navigate to the dynamic route for this new chat
-      await navigate({
-        to: "/app/$chatId",
-        params: { chatId: newChat.id },
-        search: { initialMessage: messageText },
-      });
-    } catch (error) {
-      console.error("Failed to start chat from main screen:", error);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  function handleSend(text: string, image: File | null) {
+    const id = uuid();
+    // Navigate to chat and stash the initial message via URL search state
+    navigate({
+      to: "/app/$chatId",
+      params: { chatId: id },
+      search: { initial: text } as any,
+    });
+    // image is dropped for the very first send from home; user can re-attach in the chat.
+    void image;
+  }
 
   return (
-    <div className="flex flex-col h-full w-full max-w-4xl mx-auto px-4">
-      <div className="flex-1 overflow-y-auto">
-        <EmptyState
-          onSelectPrompt={handleInitialSend}
-          isLoading={isSubmitting}
-        />
-      </div>
-      <div className="pb-6">
-        <Composer
-          onSend={handleInitialSend}
-          disabled={isSubmitting}
-          placeholder="Ask Louis Smart anything or pick a quick command..."
-        />
-      </div>
-    </div>
+    <AppShell>
+      <EmptyState
+        onPick={(text) => {
+          const id = uuid();
+          navigate({ to: "/app/$chatId", params: { chatId: id }, search: { initial: text } as any });
+        }}
+      />
+      <Composer onSend={handleSend} onStop={noop.stopGenerating} generating={false} />
+    </AppShell>
   );
 }
-
-export default AppIndexPage;
