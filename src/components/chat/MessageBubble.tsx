@@ -11,7 +11,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
       className={`flex gap-2 sm:gap-3 ${isUser ? "justify-end" : "justify-start"}`}
