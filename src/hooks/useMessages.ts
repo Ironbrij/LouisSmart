@@ -229,25 +229,23 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
         }
       } finally {
         if (useFirestore) {
-          try {
-            await updateDoc(doc(db, "messages", assistantRowId), { content: buffer });
-            await updateDoc(doc(db, "chats", chatId), {
+          // Render and unlock the composer before network persistence completes.
+          setMessages((prev) => {
+            const updated = prev.some((message) => message.id === assistantRowId)
+              ? prev.map((message) =>
+                  message.id === assistantRowId ? { ...message, content: buffer } : message,
+                )
+              : [...prev, { ...assistantMsg, id: assistantRowId, content: buffer }];
+            return updated.sort((a, b) => a.timestamp - b.timestamp);
+          });
+
+          void Promise.all([
+            updateDoc(doc(db, "messages", assistantRowId), { content: buffer }),
+            updateDoc(doc(db, "chats", chatId), {
               last_message: buffer.slice(0, 120),
               updated_at: serverTimestamp(),
-            });
-
-            // Keep the completed response visible while Firestore delivers the snapshot.
-            setMessages((prev) => {
-              const updated = prev.some((message) => message.id === assistantRowId)
-                ? prev.map((message) =>
-                    message.id === assistantRowId ? { ...message, content: buffer } : message,
-                  )
-                : [...prev, { ...assistantMsg, id: assistantRowId, content: buffer }];
-              return updated.sort((a, b) => a.timestamp - b.timestamp);
-            });
-          } catch (err) {
-            console.error("Failed to update Firestore assistant message", err);
-          }
+            }),
+          ]).catch((err) => console.error("Failed to persist Firestore response", err));
         } else {
           const finalAssistantMsg: ChatMessage = { ...assistantMsg, content: buffer, timestamp: Date.now() };
           setMessages((prev) => {

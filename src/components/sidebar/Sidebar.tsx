@@ -240,6 +240,19 @@ export function Sidebar({ collapsed, onToggle, onClose }: Props) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {!collapsed && (
+          <button
+            onClick={async () => {
+              await signOut();
+              navigate({ to: "/auth" });
+              onClose?.();
+            }}
+            className="mt-1 flex h-9 w-full items-center gap-2 rounded-lg px-3 text-xs text-destructive transition hover:bg-destructive/10"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Logout
+          </button>
+        )}
       </div>
 
       <AlertDialog open={confirmDeleteAll} onOpenChange={setConfirmDeleteAll}>
