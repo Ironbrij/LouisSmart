@@ -18,6 +18,7 @@ export interface StreamOptions {
  * Supports plain streamed text or a JSON `{ reply: string }` fallback.
  */
 const REQUEST_TIMEOUT_MS = 45_000;
+const STREAM_IDLE_TIMEOUT_MS = 20_000;
 
 export async function streamAiReply(payload: WebhookPayload, opts: StreamOptions): Promise<string> {
   const url = (import.meta.env.VITE_WEBHOOK_URL as string) || "https://vmi3182726.contaboserver.net/webhook/4f4322b3-30eb-4d63-b7ea-d9d18558772c";
@@ -26,7 +27,11 @@ export async function streamAiReply(payload: WebhookPayload, opts: StreamOptions
   // webhook/n8n workflow that never responds doesn't leave the UI stuck "generating"
   // forever with no feedback.
   const timeoutCtrl = new AbortController();
-  const timeoutId = setTimeout(() => timeoutCtrl.abort(), REQUEST_TIMEOUT_MS);
+  let timeoutReason: "request" | "stream-idle" | null = null;
+  const timeoutId = setTimeout(() => {
+    timeoutReason = "request";
+    timeoutCtrl.abort();
+  }, REQUEST_TIMEOUT_MS);
   const onCallerAbort = () => timeoutCtrl.abort();
   opts.signal?.addEventListener("abort", onCallerAbort);
 
@@ -44,7 +49,7 @@ export async function streamAiReply(payload: WebhookPayload, opts: StreamOptions
       abortErr.name = "AbortError";
       throw abortErr;
     }
-    if (timeoutCtrl.signal.aborted) {
+    if (timeoutCtrl.signal.aborted && timeoutReason === "request") {
       throw new Error(`No response from the AI after ${REQUEST_TIMEOUT_MS / 1000}s. Please try again.`);
     }
     throw e;
@@ -102,30 +107,52 @@ export async function streamAiReply(payload: WebhookPayload, opts: StreamOptions
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let full = "";
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      // Handle SSE-style lines
-      const cleaned = chunk
-        .split("\n")
-        .map((line) => (line.startsWith("data:") ? line.slice(5).trim() : line))
-        .filter((line) => line && line !== "[DONE]")
-        .join("");
-      if (cleaned) {
-        full += cleaned;
-        opts.onToken(cleaned);
+  let idleTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const resetIdleTimeout = () => {
+    if (idleTimeoutId) clearTimeout(idleTimeoutId);
+    idleTimeoutId = setTimeout(() => {
+      timeoutReason = "stream-idle";
+      timeoutCtrl.abort();
+    }, STREAM_IDLE_TIMEOUT_MS);
+  };
+
+  resetIdleTimeout();
+
+  while (true) {
+    let readResult: ReadableStreamReadResult<Uint8Array>;
+    try {
+      readResult = await reader.read();
+    } catch (e) {
+      if (opts.signal?.aborted) {
+        const abortErr = new Error("Aborted");
+        abortErr.name = "AbortError";
+        throw abortErr;
       }
+      if (timeoutCtrl.signal.aborted && timeoutReason === "stream-idle") {
+        throw new Error(
+          `The AI stopped responding for ${STREAM_IDLE_TIMEOUT_MS / 1000}s while streaming. Please try again.`,
+        );
+      }
+      throw e;
     }
-  } catch (err) {
-    if (opts.signal?.aborted) {
-      const abortErr = new Error("Aborted");
-      abortErr.name = "AbortError";
-      throw abortErr;
+
+    const { value, done } = readResult;
+    if (done) break;
+    resetIdleTimeout();
+    const chunk = decoder.decode(value, { stream: true });
+    // Handle SSE-style lines
+    const cleaned = chunk
+      .split("\n")
+      .map((line) => (line.startsWith("data:") ? line.slice(5).trim() : line))
+      .filter((line) => line && line !== "[DONE]")
+      .join("");
+    if (cleaned) {
+      full += cleaned;
+      opts.onToken(cleaned);
     }
-    throw err;
   }
+  if (idleTimeoutId) clearTimeout(idleTimeoutId);
   return full || "No content generated.";
 }
 
@@ -143,4 +170,3 @@ async function simulateStreamText(rawText: string, opts: StreamOptions): Promise
   }
   return full || text;
 }
-

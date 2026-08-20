@@ -61,11 +61,17 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
   };
 
   useEffect(() => {
-    if (!chatId) {
-      setMessages([]);
-      localRef.current = [];
-      return;
+    localRef.current = [];
+    setMessages((prev) => (chatId ? prev : []));
+    abortRef.current?.abort();
+    abortRef.current = null;
+    pendingBufferRef.current = "";
+    if (streamFrameRef.current !== null) {
+      cancelAnimationFrame(streamFrameRef.current);
+      streamFrameRef.current = null;
     }
+    setGenerating(false);
+    if (!chatId) return;
 
     const loadLocally = () => {
       try {
@@ -115,6 +121,15 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
 
     return () => unsubscribe();
   }, [uid, chatId]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      if (streamFrameRef.current !== null) {
+        cancelAnimationFrame(streamFrameRef.current);
+      }
+    };
+  }, []);
 
   const uploadImage = useCallback(
     async (file: File): Promise<{ url: string; type: string; name: string }> => {
@@ -349,4 +364,3 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
 
   return { messages: merged, loading, sendMessage, generating, stopGenerating };
 }
-
