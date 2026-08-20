@@ -7,7 +7,6 @@ import {
   where,
   orderBy,
   onSnapshot,
-  addDoc,
   updateDoc,
   setDoc,
   serverTimestamp,
@@ -130,33 +129,9 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
 
       if (useFirestore) {
         try {
-          await setDoc(
-            doc(db, "chats", chatId),
-            {
-              user_id: uid,
-              title: trimmed ? trimmed.slice(0, 48) : "New Chat",
-              last_message: trimmed,
-              updated_at: serverTimestamp(),
-            },
-            { merge: true },
-          );
-
-          const userRef = await addDoc(collection(db, "messages"), {
-            chat_id: chatId,
-            role: "user",
-            content: trimmed,
-            attachments,
-            timestamp: serverTimestamp(),
-          });
+          const userRef = doc(collection(db, "messages"));
+          const assistantRef = doc(collection(db, "messages"));
           userRowId = userRef.id;
-
-          const assistantRef = await addDoc(collection(db, "messages"), {
-            chat_id: chatId,
-            role: "assistant",
-            content: "",
-            attachments: [],
-            timestamp: serverTimestamp(),
-          });
           assistantRowId = assistantRef.id;
 
           setMessages((prev) => {
@@ -165,6 +140,34 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
             byId.set(assistantRowId, { ...assistantMsg, id: assistantRowId, streaming: true });
             return Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
           });
+
+          const persistence = Promise.all([
+            setDoc(doc(db, "chats", chatId), {
+              user_id: uid,
+              title: trimmed ? trimmed.slice(0, 48) : "New Chat",
+              last_message: trimmed,
+              updated_at: serverTimestamp(),
+            }, { merge: true }),
+            setDoc(userRef, {
+              chat_id: chatId,
+              role: "user",
+              content: trimmed,
+              attachments,
+              timestamp: serverTimestamp(),
+            }),
+            setDoc(assistantRef, {
+              chat_id: chatId,
+              role: "assistant",
+              content: "",
+              attachments: [],
+              timestamp: serverTimestamp(),
+            }),
+          ]);
+          void Promise.race([
+            persistence,
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Firestore persistence timeout")), 5000)),
+          ]).catch((error) => console.warn("Firestore persistence deferred", error));
+
         } catch (err) {
           console.warn("Firestore write failed, falling back to local storage", err);
           useFirestore = false;
