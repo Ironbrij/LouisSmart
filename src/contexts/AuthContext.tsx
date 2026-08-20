@@ -4,6 +4,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   getRedirectResult,
+  signInWithPopup,
   signInWithRedirect,
   GoogleAuthProvider,
   sendPasswordResetEmail,
@@ -104,7 +105,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!firebaseReady) {
         throw new Error("Google Sign-In requires Firebase to be configured with VITE_FIREBASE_* environment variables.");
       }
-      await signInWithRedirect(auth, new GoogleAuthProvider());
+      try {
+        const credential = await signInWithPopup(auth, new GoogleAuthProvider());
+        setUser(toAppUser(credential.user));
+      } catch (error: any) {
+        const fallbackCodes = new Set([
+          "auth/popup-blocked",
+          "auth/popup-closed-by-user",
+          "auth/cancelled-popup-request",
+          "auth/internal-error",
+        ]);
+        if (fallbackCodes.has(error?.code)) {
+          await signInWithRedirect(auth, new GoogleAuthProvider());
+          return;
+        }
+        throw error;
+      }
     },
     async resetPassword(email) {
       if (firebaseReady) {
