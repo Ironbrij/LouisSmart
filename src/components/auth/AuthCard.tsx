@@ -16,10 +16,6 @@ export function AuthCard({ onSuccess }: { onSuccess: () => void }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!ready) {
-      toast.error("Firebase isn't configured yet. Set the VITE_FIREBASE_* env vars.");
-      return;
-    }
     setLoading(true);
     try {
       if (mode === "signin") await signIn(email, password);
@@ -33,16 +29,12 @@ export function AuthCard({ onSuccess }: { onSuccess: () => void }) {
   }
 
   async function handleGoogle() {
-    if (!ready) {
-      toast.error("Firebase isn't configured yet.");
-      return;
-    }
     setLoading(true);
     try {
       await signInGoogle();
       onSuccess();
     } catch (e: any) {
-      toast.error(e.message || "Google sign in failed. Check Firebase Authorized domains.");
+      toast.error(e.message || "Google sign in failed.");
     } finally {
       setLoading(false);
     }

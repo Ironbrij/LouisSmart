@@ -32,7 +32,7 @@ export function Composer({ onSend, onStop, generating, disabled, seed }: Props) 
   }, [text]);
 
   function handleSubmit() {
-    if (generating) return onStop();
+    if (generating) return;
     if (!text.trim() && !image) return;
     onSend(text, image);
     setText("");
@@ -74,7 +74,7 @@ export function Composer({ onSend, onStop, generating, disabled, seed }: Props) 
           <button
             onClick={() => fileRef.current?.click()}
             disabled={disabled || generating}
-            className="shrink-0 w-10 h-10 rounded-xl hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition"
+            className="shrink-0 w-10 h-10 rounded-xl hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition disabled:opacity-40"
             title="Attach image"
           >
             <ImagePlus className="w-5 h-5" />
@@ -93,27 +93,39 @@ export function Composer({ onSend, onStop, generating, disabled, seed }: Props) 
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Escape" && generating) {
                 e.preventDefault();
-                handleSubmit();
+                onStop();
+              } else if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (!generating) {
+                  handleSubmit();
+                }
               }
             }}
-            placeholder="Message Louis Smart..."
+            placeholder={generating ? "Louis Smart is responding..." : "Message Louis Smart..."}
             disabled={disabled}
             className="flex-1 resize-none bg-transparent px-2 py-2.5 text-[15px] leading-6 outline-none placeholder:text-muted-foreground max-h-[220px] scrollbar-thin"
           />
 
           <button
-            onClick={handleSubmit}
+            onClick={() => {
+              if (generating) {
+                onStop();
+              } else {
+                handleSubmit();
+              }
+            }}
             disabled={disabled || (!generating && !text.trim() && !image)}
             className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-white transition disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 active:scale-95"
             style={{ background: "var(--gradient-primary)" }}
-            title={generating ? "Stop" : "Send"}
+            title={generating ? "Stop generating" : "Send message"}
           >
             {generating ? <Square className="w-4 h-4 fill-current" /> : <Send className="w-4 h-4" />}
           </button>
         </div>
       </motion.div>
+
       <p className="mt-2 text-center text-[11px] text-muted-foreground">
         If Louis Smart makes mistakes, that's on you!
       </p>

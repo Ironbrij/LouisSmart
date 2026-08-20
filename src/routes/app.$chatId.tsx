@@ -25,8 +25,10 @@ function ChatPage() {
   const { initial } = useSearch({ from: "/app/$chatId" });
   const navigate = useNavigate();
   const { messages, sendMessage, generating, stopGenerating } = useMessages(user?.id, chatId);
-  const [seed, setSeed] = useState<string | undefined>();
+  const [seed] = useState<string | undefined>();
   const sentRef = useRef<string | null>(null);
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
 
   // If we arrived with an initial message, auto-send it once
   useEffect(() => {
@@ -37,10 +39,11 @@ function ChatPage() {
     if (sentRef.current === key) return;
     sentRef.current = key;
 
-    sendMessage(initial, null);
+    sendMessageRef.current(initial, null);
     // Strip the ?initial= search param so a refresh won't re-send
     navigate({ to: "/app/$chatId", params: { chatId }, search: {}, replace: true });
-  }, [initial, chatId, sendMessage, navigate]);
+  }, [initial, chatId, navigate]);
+
 
   return (
     <AppShell>

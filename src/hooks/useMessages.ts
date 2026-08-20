@@ -27,53 +27,84 @@ function toMillis(value: unknown): number {
 }
 
 export function useMessages(uid: string | undefined, chatId: string | undefined) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (!chatId) return [];
+    try {
+      const stored = localStorage.getItem(`louis-chat-${chatId}`);
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const localRef = useRef<ChatMessage[]>([]);
   const streamFrameRef = useRef<number | null>(null);
   const pendingBufferRef = useRef("");
-  const [localTick, setLocalTick] = useState(0);
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  const [, setLocalTick] = useState(0);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const fromDoc = (d: QueryDocumentSnapshot<DocumentData>): ChatMessage => {
     const data = d.data();
     return {
       id: d.id,
       role: data.role,
-      content: data.content,
+      content: data.content || "",
       attachments: data.attachments || [],
       timestamp: toMillis(data.timestamp),
     };
   };
 
   useEffect(() => {
-    localRef.current = [];
-    setMessages([]);
-    if (!chatId) return;
+    if (!chatId) {
+      setMessages([]);
+      localRef.current = [];
+      return;
+    }
 
     const loadLocally = () => {
       try {
         const stored = localStorage.getItem(`louis-chat-${chatId}`);
-        setMessages(stored ? JSON.parse(stored) : []);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          setMessages(parsed);
+        }
       } catch (e) {
         console.error("Local storage load failed", e);
       }
       setLoading(false);
     };
 
-    if (!uid || !firebaseReady) {
-      loadLocally();
+    loadLocally();
+
+    if (!uid || !firebaseReady || uid === MOCK_UID) {
       return;
     }
 
     setLoading(true);
-    const q = query(collection(db, "messages"), where("chat_id", "==", chatId), orderBy("timestamp", "asc"));
+    const q = query(
+      collection(db, "messages"),
+      where("chat_id", "==", chatId),
+      orderBy("timestamp", "asc")
+    );
 
     const unsubscribe = onSnapshot(
       q,
       (snap) => {
-        setMessages(snap.docs.map(fromDoc));
+        if (!snap.empty) {
+          const remote = snap.docs.map(fromDoc);
+          setMessages(remote);
+          try {
+            localStorage.setItem(`louis-chat-${chatId}`, JSON.stringify(remote));
+          } catch {
+            // ignore
+          }
+        }
         setLoading(false);
       },
       (error) => {
@@ -107,7 +138,7 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
       let attachments: ChatMessage["attachments"] = [];
       if (image) {
         try {
-          if (uid && firebaseReady) {
+          if (uid && firebaseReady && uid !== MOCK_UID) {
             const up = await uploadImage(image);
             attachments = [up];
           } else {
@@ -115,17 +146,49 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
           }
         } catch (e) {
           console.error("upload failed", e);
+          attachments = [{ url: URL.createObjectURL(image), type: image.type, name: image.name }];
         }
       }
 
       const userMsgId = uuid();
       const userMsg: ChatMessage = { id: userMsgId, role: "user", content: trimmed, attachments, timestamp: Date.now() };
       const assistantMsgId = uuid();
-      const assistantMsg: ChatMessage = { id: assistantMsgId, role: "assistant", content: "", timestamp: Date.now() };
+      const assistantMsg: ChatMessage = { id: assistantMsgId, role: "assistant", content: "", timestamp: Date.now() + 1, streaming: true };
 
       let useFirestore = Boolean(uid && firebaseReady && uid !== MOCK_UID);
       let userRowId = userMsgId;
       let assistantRowId: string = assistantMsgId;
+
+      // Update state immediately so the user's message appears instantly
+      setMessages((prev) => {
+        const next = [...prev, userMsg, assistantMsg];
+        try {
+          localStorage.setItem(`louis-chat-${chatId}`, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+
+      // Update local chats list summary immediately
+      try {
+        const stored = localStorage.getItem("louis-chats-list");
+        const list = stored ? JSON.parse(stored) : [];
+        const existingIndex = list.findIndex((c: any) => c.id === chatId);
+        const chatSummary = {
+          id: chatId,
+          title: trimmed ? trimmed.slice(0, 48) : "New Chat",
+          lastMessage: trimmed,
+          updatedAt: Date.now(),
+          createdAt: existingIndex >= 0 ? list[existingIndex].createdAt : Date.now(),
+        };
+        if (existingIndex >= 0) list[existingIndex] = chatSummary;
+        else list.unshift(chatSummary);
+        localStorage.setItem("louis-chats-list", JSON.stringify(list));
+        window.dispatchEvent(new Event("louis-chats-updated"));
+      } catch (e) {
+        console.error("failed to update local chats list", e);
+      }
 
       if (useFirestore) {
         try {
@@ -134,20 +197,17 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
           userRowId = userRef.id;
           assistantRowId = assistantRef.id;
 
-          setMessages((prev) => {
-            const byId = new Map(prev.map((message) => [message.id, message] as const));
-            byId.set(userRowId, { ...userMsg, id: userRowId });
-            byId.set(assistantRowId, { ...assistantMsg, id: assistantRowId, streaming: true });
-            return Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
-          });
-
-          const persistence = Promise.all([
-            setDoc(doc(db, "chats", chatId), {
-              user_id: uid,
-              title: trimmed ? trimmed.slice(0, 48) : "New Chat",
-              last_message: trimmed,
-              updated_at: serverTimestamp(),
-            }, { merge: true }),
+          void Promise.all([
+            setDoc(
+              doc(db, "chats", chatId),
+              {
+                user_id: uid,
+                title: trimmed ? trimmed.slice(0, 48) : "New Chat",
+                last_message: trimmed,
+                updated_at: serverTimestamp(),
+              },
+              { merge: true },
+            ),
             setDoc(userRef, {
               chat_id: chatId,
               role: "user",
@@ -162,41 +222,12 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
               attachments: [],
               timestamp: serverTimestamp(),
             }),
-          ]);
-          void Promise.race([
-            persistence,
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Firestore persistence timeout")), 5000)),
-          ]).catch((error) => console.warn("Firestore persistence deferred", error));
-
+          ]).catch((err) => {
+            console.warn("Firestore persistence deferred or failed", err);
+          });
         } catch (err) {
-          console.warn("Firestore write failed, falling back to local storage", err);
+          console.warn("Firestore setup failed, using local storage", err);
           useFirestore = false;
-        }
-      }
-
-      if (!useFirestore) {
-        setMessages((prev) => {
-          const updated = [...prev, userMsg];
-          localStorage.setItem(`louis-chat-${chatId}`, JSON.stringify(updated));
-          return updated;
-        });
-        try {
-          const stored = localStorage.getItem("louis-chats-list");
-          const list = stored ? JSON.parse(stored) : [];
-          const existingIndex = list.findIndex((c: any) => c.id === chatId);
-          const chatSummary = {
-            id: chatId,
-            title: trimmed ? trimmed.slice(0, 48) : "New Chat",
-            lastMessage: trimmed,
-            updatedAt: Date.now(),
-            createdAt: existingIndex >= 0 ? list[existingIndex].createdAt : Date.now(),
-          };
-          if (existingIndex >= 0) list[existingIndex] = chatSummary;
-          else list.unshift(chatSummary);
-          localStorage.setItem("louis-chats-list", JSON.stringify(list));
-          window.dispatchEvent(new Event("louis-chats-updated"));
-        } catch (e) {
-          console.error("failed to update local chats list", e);
         }
       }
 
@@ -205,8 +236,11 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
       abortRef.current = ctrl;
 
       let buffer = "";
-      localRef.current = [{ id: assistantRowId, role: "assistant", content: "", timestamp: Date.now(), streaming: true }];
+      pendingBufferRef.current = "";
+      localRef.current = [{ id: assistantRowId, role: "assistant", content: "", timestamp: Date.now() + 1, streaming: true }];
       setLocalTick((t) => t + 1);
+
+      const historyPayload = messagesRef.current.map((m) => ({ role: m.role, content: m.content }));
 
       try {
         await streamAiReply(
@@ -216,7 +250,7 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
             message: trimmed,
             chatInput: trimmed,
             sessionId: chatId,
-            history: messages.map((m) => ({ role: m.role, content: m.content })),
+            history: historyPayload,
             image_url: attachments[0]?.url,
           },
           {
@@ -231,7 +265,7 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
                       id: assistantRowId,
                       role: "assistant",
                       content: pendingBufferRef.current,
-                      timestamp: Date.now(),
+                      timestamp: Date.now() + 1,
                       streaming: true,
                     },
                   ];
@@ -244,47 +278,48 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
         );
       } catch (e: any) {
         if (e?.name !== "AbortError") {
-          buffer += `\n\n_Error: ${e.message || "failed to reach webhook"}_`;
+          const errMsg = e?.message || "Failed to reach Louis Smart AI service. Please try again.";
+          buffer = buffer ? `${buffer}\n\n_(${errMsg})_` : errMsg;
         }
       } finally {
-        if (useFirestore) {
-          // Render and unlock the composer before network persistence completes.
-          setMessages((prev) => {
-            const updated = prev.some((message) => message.id === assistantRowId)
-              ? prev.map((message) =>
-                  message.id === assistantRowId ? { ...message, content: buffer } : message,
-                )
-              : [...prev, { ...assistantMsg, id: assistantRowId, content: buffer }];
-            return updated.sort((a, b) => a.timestamp - b.timestamp);
-          });
+        const finalContent = buffer.trim() || (ctrl.signal.aborted ? "*(Response stopped)*" : "I'm sorry, I couldn't generate a response. Please try again.");
 
+        setMessages((prev) => {
+          const updated = prev.map((m) =>
+            m.id === assistantRowId || m.id === assistantMsgId
+              ? { ...m, id: assistantRowId, content: finalContent, streaming: false }
+              : m
+          );
+          try {
+            localStorage.setItem(`louis-chat-${chatId}`, JSON.stringify(updated));
+          } catch {
+            // ignore
+          }
+          return updated;
+        });
+
+        try {
+          const stored = localStorage.getItem("louis-chats-list");
+          const list = stored ? JSON.parse(stored) : [];
+          const existingIndex = list.findIndex((c: any) => c.id === chatId);
+          if (existingIndex >= 0) {
+            list[existingIndex].lastMessage = finalContent.slice(0, 120);
+            list[existingIndex].updatedAt = Date.now();
+            localStorage.setItem("louis-chats-list", JSON.stringify(list));
+            window.dispatchEvent(new Event("louis-chats-updated"));
+          }
+        } catch (e) {
+          console.error("failed to update local chats list summary", e);
+        }
+
+        if (useFirestore) {
           void Promise.all([
-            updateDoc(doc(db, "messages", assistantRowId), { content: buffer }),
+            updateDoc(doc(db, "messages", assistantRowId), { content: finalContent }),
             updateDoc(doc(db, "chats", chatId), {
-              last_message: buffer.slice(0, 120),
+              last_message: finalContent.slice(0, 120),
               updated_at: serverTimestamp(),
             }),
           ]).catch((err) => console.error("Failed to persist Firestore response", err));
-        } else {
-          const finalAssistantMsg: ChatMessage = { ...assistantMsg, content: buffer, timestamp: Date.now() };
-          setMessages((prev) => {
-            const updated = [...prev, finalAssistantMsg];
-            localStorage.setItem(`louis-chat-${chatId}`, JSON.stringify(updated));
-            return updated;
-          });
-          try {
-            const stored = localStorage.getItem("louis-chats-list");
-            const list = stored ? JSON.parse(stored) : [];
-            const existingIndex = list.findIndex((c: any) => c.id === chatId);
-            if (existingIndex >= 0) {
-              list[existingIndex].lastMessage = buffer.slice(0, 120);
-              list[existingIndex].updatedAt = Date.now();
-              localStorage.setItem("louis-chats-list", JSON.stringify(list));
-              window.dispatchEvent(new Event("louis-chats-updated"));
-            }
-          } catch (e) {
-            console.error("failed to update local chats list summary", e);
-          }
         }
 
         localRef.current = [];
@@ -297,11 +332,12 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
         abortRef.current = null;
       }
     },
-    [uid, chatId, uploadImage, messages],
+    [uid, chatId, uploadImage],
   );
 
   const stopGenerating = useCallback(() => {
     abortRef.current?.abort();
+    setGenerating(false);
   }, []);
 
   const merged: ChatMessage[] = (() => {
@@ -311,7 +347,6 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
     return Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
   })();
 
-  void localTick;
-
   return { messages: merged, loading, sendMessage, generating, stopGenerating };
 }
+

@@ -85,8 +85,14 @@ export async function streamAiReply(payload: WebhookPayload, opts: StreamOptions
       // Keep rawText as is
     }
 
-    return simulateStreamText(text, opts);
+
+    if (!text || (typeof text === "string" && !text.trim())) {
+      text = "I'm here and ready to help! What would you like to discuss?";
+    }
+
+    return simulateStreamText(typeof text === "string" ? text : JSON.stringify(text), opts);
   }
+
 
   if (!res.body) {
     const text = await res.text();
@@ -96,25 +102,36 @@ export async function streamAiReply(payload: WebhookPayload, opts: StreamOptions
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let full = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    const chunk = decoder.decode(value, { stream: true });
-    // Handle SSE-style lines
-    const cleaned = chunk
-      .split("\n")
-      .map((line) => (line.startsWith("data:") ? line.slice(5).trim() : line))
-      .filter((line) => line && line !== "[DONE]")
-      .join("");
-    full += cleaned;
-    opts.onToken(cleaned);
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      // Handle SSE-style lines
+      const cleaned = chunk
+        .split("\n")
+        .map((line) => (line.startsWith("data:") ? line.slice(5).trim() : line))
+        .filter((line) => line && line !== "[DONE]")
+        .join("");
+      if (cleaned) {
+        full += cleaned;
+        opts.onToken(cleaned);
+      }
+    }
+  } catch (err) {
+    if (opts.signal?.aborted) {
+      const abortErr = new Error("Aborted");
+      abortErr.name = "AbortError";
+      throw abortErr;
+    }
+    throw err;
   }
-  return full;
+  return full || "No content generated.";
 }
 
-async function simulateStreamText(text: string, opts: StreamOptions): Promise<string> {
-  // Fast chunked rendering: send ~50 words at a time with minimal delay
-  const CHUNK_SIZE = 50;
+async function simulateStreamText(rawText: string, opts: StreamOptions): Promise<string> {
+  const text = String(rawText ?? "").trim() || "No response received from assistant.";
+  const CHUNK_SIZE = 30;
   const words = text.split(/([\s]+)/);
   let full = "";
   for (let i = 0; i < words.length; i += CHUNK_SIZE) {
@@ -122,7 +139,8 @@ async function simulateStreamText(text: string, opts: StreamOptions): Promise<st
     const chunk = words.slice(i, i + CHUNK_SIZE).join("");
     full += chunk;
     opts.onToken(chunk);
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 10));
   }
-  return full;
+  return full || text;
 }
+

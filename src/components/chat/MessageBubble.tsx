@@ -42,8 +42,10 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
           <div className="rounded-2xl rounded-tl-sm bg-muted/50 border border-border/60 px-4 py-3 overflow-hidden">
             {message.content ? (
               <Markdown>{message.content}</Markdown>
-            ) : (
+            ) : message.streaming ? (
               <TypingDots />
+            ) : (
+              <span className="text-sm text-muted-foreground italic">No response received.</span>
             )}
             {message.streaming && message.content && (
               <span className="inline-block w-1.5 h-4 align-middle bg-primary/70 ml-0.5 animate-pulse" />
