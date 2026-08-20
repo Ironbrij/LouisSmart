@@ -3,12 +3,10 @@ import {
   Outlet,
   Link,
   HeadContent,
-  Scripts,
   createRootRouteWithContext,
   useRouter,
 } from "@tanstack/react-router";
 import { useEffect } from "react";
-import type { ReactNode } from "react";
 
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import "../styles.css";
@@ -78,35 +76,34 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   component: RootComponent,
-  shellComponent: RootDocument,
   notFoundComponent: NotFoundComponent,
   errorComponent: ErrorComponent,
 });
 
+// This app is built and deployed as a pure client-side SPA (see index.html ->
+// entry-client.tsx -> ReactDOM.createRoot, and vite.static.config.ts, which
+// has no TanStack Start plugin). Do NOT add `shellComponent`, `<Scripts />`,
+// or a root-level `head:` config here: those are TanStack Start SSR
+// primitives. React DOM's discrete-event dispatch checks the root fiber's
+// `isDehydrated` state and, when present, walks sibling DOM comment nodes
+// looking for hydration boundary markers (`<!--$-->` etc.) that only a real
+// server render would have written. Since this DOM was never server
+// rendered, that walk never finds a match and spins forever on the main
+// thread the moment any input is focused — a silent, un-debuggable freeze.
+// `<HeadContent />` alone is fine here: it just portals <title>/<meta> tags
+// from route `head()` configs into document.head and doesn't touch the
+// SSR/hydration machinery.
 function RootComponent() {
-  return <Outlet />;
-}
-
-function RootDocument({ children }: { children: ReactNode }) {
   const { queryClient } = Route.useRouteContext();
   return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <HeadContent />
-      </head>
-      <body>
-        <QueryClientProvider client={queryClient}>
-          <ThemeProvider>
-            <AuthProvider>
-              {children}
-              <Toaster />
-            </AuthProvider>
-          </ThemeProvider>
-        </QueryClientProvider>
-        <Scripts />
-      </body>
-    </html>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <AuthProvider>
+          <HeadContent />
+          <Outlet />
+          <Toaster />
+        </AuthProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
   );
 }
