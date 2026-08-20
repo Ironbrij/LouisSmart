@@ -3,7 +3,8 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  signInWithPopup,
+  getRedirectResult,
+  signInWithRedirect,
   GoogleAuthProvider,
   sendPasswordResetEmail,
   signOut as firebaseSignOut,
@@ -72,6 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const unsubscribe = onAuthStateChanged(auth, settle, () => settle(null));
     const timeout = window.setTimeout(() => settle(null), 3000);
+    void getRedirectResult(auth)
+      .then((credential) => {
+        if (credential?.user) settle(credential.user);
+      })
+      .catch((error) => console.error("Google sign-in redirect failed", error));
 
     return () => {
       window.clearTimeout(timeout);
@@ -98,8 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!firebaseReady) {
         throw new Error("Google Sign-In requires Firebase to be configured with VITE_FIREBASE_* environment variables.");
       }
-      const credential = await signInWithPopup(auth, new GoogleAuthProvider());
-      setUser(toAppUser(credential.user));
+      await signInWithRedirect(auth, new GoogleAuthProvider());
     },
     async resetPassword(email) {
       if (firebaseReady) {
