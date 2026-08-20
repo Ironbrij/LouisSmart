@@ -84,18 +84,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 });
 
 function RootComponent() {
-  const { queryClient } = Route.useRouteContext();
-
-  return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <AuthProvider>
-          <Outlet />
-          <Toaster />
-        </AuthProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
-  );
+  return <Outlet />;
 }
 
 function RootDocument({ children }: { children: ReactNode }) {
