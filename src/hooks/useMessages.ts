@@ -33,6 +33,8 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
   const [generating, setGenerating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const localRef = useRef<ChatMessage[]>([]);
+  const streamFrameRef = useRef<number | null>(null);
+  const pendingBufferRef = useRef("");
   const [localTick, setLocalTick] = useState(0);
 
   const fromDoc = (d: QueryDocumentSnapshot<DocumentData>): ChatMessage => {
@@ -218,8 +220,22 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
             signal: ctrl.signal,
             onToken: (chunk) => {
               buffer += chunk;
-              localRef.current = [{ id: assistantRowId, role: "assistant", content: buffer, timestamp: Date.now(), streaming: true }];
-              setLocalTick((t) => t + 1);
+              pendingBufferRef.current = buffer;
+              if (streamFrameRef.current === null) {
+                streamFrameRef.current = requestAnimationFrame(() => {
+                  localRef.current = [
+                    {
+                      id: assistantRowId,
+                      role: "assistant",
+                      content: pendingBufferRef.current,
+                      timestamp: Date.now(),
+                      streaming: true,
+                    },
+                  ];
+                  streamFrameRef.current = null;
+                  setLocalTick((t) => t + 1);
+                });
+              }
             },
           },
         );
@@ -269,6 +285,10 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
         }
 
         localRef.current = [];
+        if (streamFrameRef.current !== null) {
+          cancelAnimationFrame(streamFrameRef.current);
+          streamFrameRef.current = null;
+        }
         setLocalTick((t) => t + 1);
         setGenerating(false);
         abortRef.current = null;

@@ -5,7 +5,10 @@ import type { ChatMessage } from "@/lib/types";
 export function MessageList({ messages }: { messages: ChatMessage[] }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const frame = requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [messages]);
 
   return (
