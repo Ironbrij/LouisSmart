@@ -62,12 +62,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    let settled = false;
+    const settle = (firebaseUser: FirebaseUser | null) => {
+      if (settled) return;
+      settled = true;
       setUser(toAppUser(firebaseUser));
       setLoading(false);
-    });
+    };
 
-    return () => unsubscribe();
+    const unsubscribe = onAuthStateChanged(auth, settle, () => settle(null));
+    const timeout = window.setTimeout(() => settle(null), 3000);
+
+    return () => {
+      window.clearTimeout(timeout);
+      unsubscribe();
+    };
   }, []);
 
   const value: AuthContextValue = {

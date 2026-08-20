@@ -2,21 +2,19 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
   Link,
+  HeadContent,
+  Scripts,
   createRootRouteWithContext,
   useRouter,
 } from "@tanstack/react-router";
 import { useEffect } from "react";
+import type { ReactNode } from "react";
 
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import "../styles.css";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { Toaster } from "@/components/ui/sonner";
-
-// NOTE: This app deploys as a pure client-side SPA (entry-client.tsx -> createRoot).
-// SSR-only primitives (shellComponent, <Scripts/>, <HeadContent/>) MUST NOT be used
-// here — rendering them in a client createRoot injects framework hydration markers
-// into the DOM and makes React's event system infinite-loop on focus.
-// Page <title>/meta live in index.html instead.
 
 function NotFoundComponent() {
   return (
@@ -80,6 +78,7 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   component: RootComponent,
+  shellComponent: RootDocument,
   notFoundComponent: NotFoundComponent,
   errorComponent: ErrorComponent,
 });
@@ -96,5 +95,25 @@ function RootComponent() {
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>
+  );
+}
+
+function RootDocument({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <HeadContent />
+      </head>
+      <body>
+        <QueryClientProvider client={new QueryClient()}>
+          <ThemeProvider>
+            <AuthProvider>{children}</AuthProvider>
+          </ThemeProvider>
+        </QueryClientProvider>
+        <Scripts />
+      </body>
+    </html>
   );
 }

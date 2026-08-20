@@ -123,6 +123,7 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
       const assistantMsg: ChatMessage = { id: assistantMsgId, role: "assistant", content: "", timestamp: Date.now() };
 
       let useFirestore = Boolean(uid && firebaseReady && uid !== MOCK_UID);
+      let userRowId = userMsgId;
       let assistantRowId: string = assistantMsgId;
 
       if (useFirestore) {
@@ -138,13 +139,14 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
             { merge: true },
           );
 
-          await addDoc(collection(db, "messages"), {
+          const userRef = await addDoc(collection(db, "messages"), {
             chat_id: chatId,
             role: "user",
             content: trimmed,
             attachments,
             timestamp: serverTimestamp(),
           });
+          userRowId = userRef.id;
 
           const assistantRef = await addDoc(collection(db, "messages"), {
             chat_id: chatId,
@@ -154,6 +156,13 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
             timestamp: serverTimestamp(),
           });
           assistantRowId = assistantRef.id;
+
+          setMessages((prev) => {
+            const byId = new Map(prev.map((message) => [message.id, message] as const));
+            byId.set(userRowId, { ...userMsg, id: userRowId });
+            byId.set(assistantRowId, { ...assistantMsg, id: assistantRowId, streaming: true });
+            return Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
+          });
         } catch (err) {
           console.warn("Firestore write failed, falling back to local storage", err);
           useFirestore = false;
@@ -225,6 +234,16 @@ export function useMessages(uid: string | undefined, chatId: string | undefined)
             await updateDoc(doc(db, "chats", chatId), {
               last_message: buffer.slice(0, 120),
               updated_at: serverTimestamp(),
+            });
+
+            // Keep the completed response visible while Firestore delivers the snapshot.
+            setMessages((prev) => {
+              const updated = prev.some((message) => message.id === assistantRowId)
+                ? prev.map((message) =>
+                    message.id === assistantRowId ? { ...message, content: buffer } : message,
+                  )
+                : [...prev, { ...assistantMsg, id: assistantRowId, content: buffer }];
+              return updated.sort((a, b) => a.timestamp - b.timestamp);
             });
           } catch (err) {
             console.error("Failed to update Firestore assistant message", err);

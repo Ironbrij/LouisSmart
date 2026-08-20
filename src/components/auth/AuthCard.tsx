@@ -2,7 +2,6 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { Mail, Lock, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { LouisLogo, WizardImage } from "@/components/brand/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -64,15 +63,10 @@ export function AuthCard({ onSuccess }: { onSuccess: () => void }) {
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: "easeOut" }}
-      className="w-full max-w-md rounded-3xl border border-border/60 bg-card/80 backdrop-blur-xl p-8 shadow-[0_20px_60px_-20px_rgba(15,23,42,0.25)]"
+      className="w-full rounded-[28px] border border-border/70 bg-card p-7 shadow-[0_24px_70px_-28px_rgba(15,23,42,0.28)] sm:p-9"
     >
       <div className="flex flex-col items-center text-center">
-        <div className="relative w-24 h-24 mb-2">
-          <div className="absolute inset-0 rounded-full blur-2xl opacity-40" style={{ background: "var(--gradient-primary)" }} />
-          <WizardImage className="relative w-full h-full object-contain drop-shadow-xl" />
-        </div>
-        <LouisLogo size={0} />
-        <h1 className="mt-4 text-2xl font-semibold tracking-tight">
+        <h1 className="text-[28px] font-semibold tracking-tight">
           {mode === "signin" ? "Welcome back" : "Create your account"}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -80,32 +74,27 @@ export function AuthCard({ onSuccess }: { onSuccess: () => void }) {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-3">
+      <form onSubmit={handleSubmit} className="mt-8 space-y-4">
         {mode === "signup" && (
-          <Input placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} className="h-11 rounded-xl" />
+          <label className="block space-y-1.5 text-left text-xs font-medium text-foreground">
+            Full name
+            <Input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} className="h-12 rounded-xl" />
+          </label>
         )}
-        <div className="relative">
-          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            required
-            type="email"
-            placeholder="you@email.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="h-11 rounded-xl pl-9"
-          />
-        </div>
-        <div className="relative">
-          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            required
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="h-11 rounded-xl pl-9"
-          />
-        </div>
+        <label className="block space-y-1.5 text-left text-xs font-medium text-foreground">
+          Email address
+          <div className="relative">
+            <Mail className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input required type="email" placeholder="you@email.com" value={email} onChange={(e) => setEmail(e.target.value)} className="h-12 rounded-xl pl-10" />
+          </div>
+        </label>
+        <label className="block space-y-1.5 text-left text-xs font-medium text-foreground">
+          Password
+          <div className="relative">
+            <Lock className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input required type="password" placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} className="h-12 rounded-xl pl-10" />
+          </div>
+        </label>
 
         {mode === "signin" && (
           <div className="flex justify-end">
@@ -118,7 +107,7 @@ export function AuthCard({ onSuccess }: { onSuccess: () => void }) {
         <Button
           type="submit"
           disabled={loading}
-          className="w-full h-11 rounded-xl text-sm font-medium"
+          className="h-12 w-full rounded-xl text-sm font-semibold"
           style={{ background: "var(--gradient-primary)", color: "var(--color-primary-foreground)" }}
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === "signin" ? "Login" : "Create account"}
@@ -131,7 +120,7 @@ export function AuthCard({ onSuccess }: { onSuccess: () => void }) {
         <div className="h-px flex-1 bg-border" />
       </div>
 
-      <Button variant="outline" onClick={handleGoogle} disabled={loading} className="w-full h-11 rounded-xl gap-2">
+      <Button variant="outline" onClick={handleGoogle} disabled={loading} className="h-12 w-full rounded-xl gap-2">
         <GoogleIcon /> Continue with Google
       </Button>
 

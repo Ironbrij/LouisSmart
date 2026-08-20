@@ -21,7 +21,7 @@ export function EmptyState({ onPick }: { onPick: (text: string) => void }) {
         <p className="mt-1 md:mt-2 text-sm md:text-base text-muted-foreground">How can Louis Smart help today?</p>
       </div>
 
-      <div className="relative w-full max-w-3xl h-[200px] md:h-[300px] flex items-center justify-center">
+      <div className="relative flex h-[150px] w-full max-w-3xl items-center justify-center sm:h-[200px] md:h-[300px]">
         {/* mascot */}
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
@@ -38,7 +38,7 @@ export function EmptyState({ onPick }: { onPick: (text: string) => void }) {
             transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
             className="relative"
           >
-            <WizardImage className="w-40 h-40 md:w-72 md:h-72 object-contain drop-shadow-2xl" />
+            <WizardImage className="h-32 w-32 object-contain drop-shadow-2xl sm:h-40 sm:w-40 md:h-72 md:w-72" />
           </motion.div>
         </motion.div>
 
@@ -89,7 +89,7 @@ export function EmptyState({ onPick }: { onPick: (text: string) => void }) {
 
 
       {/* Mobile suggestion grid */}
-      <div className="mt-3 grid grid-cols-2 gap-2 md:hidden w-full max-w-md">
+      <div className="mt-3 grid w-full max-w-md grid-cols-2 gap-2 md:hidden">
         {SUGGESTIONS.slice(0, 4).map((s, i) => (
           <button
             key={i}

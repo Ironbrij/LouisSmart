@@ -18,11 +18,11 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
   }, []);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="flex h-[100dvh] min-h-0 w-full overflow-hidden bg-background">
       {!isMobile && <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />}
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-14 border-b border-border/60 flex items-center gap-3 px-4 shrink-0">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border/60 px-3 sm:gap-3 sm:px-4">
           {isMobile && (
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger asChild>
@@ -35,14 +35,14 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
               </SheetContent>
             </Sheet>
           )}
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold">{title || "Louis Smart"}</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-semibold">{title || "Louis Smart"}</span>
             <Badge variant="secondary" className="text-[10px]">AI</Badge>
           </div>
           <div className="ml-auto" />
           {isMobile && <LouisLogo size={22} />}
         </header>
-        <main className="flex-1 flex flex-col overflow-hidden">{children}</main>
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
       </div>
     </div>
   );
