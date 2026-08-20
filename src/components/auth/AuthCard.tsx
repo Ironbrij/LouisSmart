@@ -42,7 +42,7 @@ export function AuthCard({ onSuccess }: { onSuccess: () => void }) {
       await signInGoogle();
       onSuccess();
     } catch (e: any) {
-      toast.error(e.message || "Google sign in failed");
+      toast.error(e.message || "Google sign in failed. Check Firebase Authorized domains.");
     } finally {
       setLoading(false);
     }

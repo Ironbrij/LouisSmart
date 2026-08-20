@@ -1,11 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Menu } from "lucide-react";
+import { LogOut, Menu } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useNavigate } from "@tanstack/react-router";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { LouisLogo } from "@/components/brand/Logo";
 import { Badge } from "@/components/ui/badge";
 
 export function AppShell({ children, title }: { children: ReactNode; title?: string }) {
+  const { signOut } = useAuth();
+  const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -40,6 +44,17 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
             <Badge variant="secondary" className="text-[10px]">AI</Badge>
           </div>
           <div className="ml-auto" />
+          <button
+            onClick={async () => {
+              await signOut();
+              navigate({ to: "/auth" });
+            }}
+            className="flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition hover:bg-muted hover:text-destructive"
+            title="Logout"
+          >
+            <LogOut className="h-4 w-4" />
+            <span className="hidden sm:inline">Logout</span>
+          </button>
           {isMobile && <LouisLogo size={22} />}
         </header>
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
