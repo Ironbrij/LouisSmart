@@ -84,19 +84,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     ready: firebaseReady,
     async signIn(email, password) {
-      await signInWithEmailAndPassword(auth, email, password);
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      setUser(toAppUser(credential.user));
     },
     async signUp(email, password, name) {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       if (name) {
         await updateProfile(cred.user, { displayName: name });
       }
+      setUser(toAppUser(cred.user));
     },
     async signInGoogle() {
       if (!firebaseReady) {
         throw new Error("Google Sign-In requires Firebase to be configured with VITE_FIREBASE_* environment variables.");
       }
-      await signInWithPopup(auth, new GoogleAuthProvider());
+      const credential = await signInWithPopup(auth, new GoogleAuthProvider());
+      setUser(toAppUser(credential.user));
     },
     async resetPassword(email) {
       if (firebaseReady) {
