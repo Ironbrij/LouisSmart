@@ -1,0 +1,210 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Louis Smart design system.
+ * Warm, sophisticated light UI with lavender / blue / pink accents,
+ * elegant serif display type + clean sans body.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  --font-display: "Playfair Display", ui-serif, Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-lavender: var(--lavender);
+  --color-blush: var(--blush);
+  --color-sky: var(--sky);
+  --color-bubble: var(--bubble);
+  --color-bubble-foreground: var(--bubble-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 1rem;
+  --background: oklch(0.988 0.004 300);
+  --foreground: oklch(0.24 0.03 275);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.24 0.03 275);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.24 0.03 275);
+  --primary: oklch(0.55 0.21 272);
+  --primary-foreground: oklch(0.99 0.005 280);
+  --secondary: oklch(0.968 0.012 285);
+  --secondary-foreground: oklch(0.3 0.04 275);
+  --muted: oklch(0.965 0.01 290);
+  --muted-foreground: oklch(0.56 0.03 278);
+  --accent: oklch(0.955 0.02 295);
+  --accent-foreground: oklch(0.3 0.05 278);
+  --destructive: oklch(0.58 0.2 22);
+  --destructive-foreground: oklch(0.99 0.005 280);
+  --border: oklch(0.925 0.012 288);
+  --input: oklch(0.93 0.012 288);
+  --ring: oklch(0.66 0.15 275);
+
+  --lavender: oklch(0.9 0.055 295);
+  --blush: oklch(0.92 0.045 5);
+  --sky: oklch(0.92 0.05 240);
+  --bubble: oklch(0.975 0.015 250);
+  --bubble-foreground: oklch(0.26 0.03 275);
+
+  --gradient-primary: linear-gradient(135deg, oklch(0.53 0.22 265), oklch(0.58 0.2 288));
+  --gradient-aura: radial-gradient(
+    60% 55% at 50% 45%,
+    color-mix(in oklab, var(--lavender) 70%, transparent),
+    transparent 70%
+  );
+  --shadow-soft: 0 1px 2px oklch(0.4 0.05 280 / 0.04), 0 10px 30px -12px oklch(0.4 0.08 280 / 0.16);
+  --shadow-card: 0 1px 3px oklch(0.4 0.05 280 / 0.05), 0 18px 40px -20px oklch(0.4 0.08 280 / 0.22);
+
+  --sidebar: oklch(0.994 0.004 300);
+  --sidebar-foreground: oklch(0.28 0.03 275);
+  --sidebar-primary: oklch(0.55 0.21 272);
+  --sidebar-primary-foreground: oklch(0.99 0.005 280);
+  --sidebar-accent: oklch(0.955 0.02 295);
+  --sidebar-accent-foreground: oklch(0.3 0.05 278);
+  --sidebar-border: oklch(0.93 0.012 288);
+  --sidebar-ring: oklch(0.66 0.15 275);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@utility font-display {
+  font-family: var(--font-display);
+}
+
+@utility bg-gradient-primary {
+  background-image: var(--gradient-primary);
+}
+
+@utility bg-aura {
+  background-image: var(--gradient-aura);
+}
+
+@utility shadow-soft {
+  box-shadow: var(--shadow-soft);
+}
+
+@utility shadow-card {
+  box-shadow: var(--shadow-card);
+}
+
+@utility glass-panel {
+  background-color: color-mix(in oklab, var(--card) 82%, transparent);
+  backdrop-filter: blur(10px);
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+}
+
+@utility prose-chat {
+  & p {
+    margin-block: 0.5rem;
+    line-height: 1.7;
+  }
+  & p:first-child {
+    margin-top: 0;
+  }
+  & p:last-child {
+    margin-bottom: 0;
+  }
+  & strong {
+    font-weight: 700;
+  }
+  & ul,
+  & ol {
+    margin-block: 0.5rem;
+    padding-left: 1.15rem;
+    line-height: 1.7;
+  }
+  & ul {
+    list-style: disc;
+  }
+  & ol {
+    list-style: decimal;
+  }
+  & code {
+    font-size: 0.875em;
+    background-color: var(--muted);
+    padding: 0.1rem 0.3rem;
+    border-radius: 0.35rem;
+  }
+  & h3 {
+    font-weight: 700;
+    margin-top: 0.85rem;
+  }
+  & table {
+    width: 100%;
+    min-width: 34rem;
+    border-collapse: collapse;
+    text-align: left;
+  }
+  & th,
+  & td {
+    border-bottom: 1px solid color-mix(in oklab, var(--border) 75%, transparent);
+    padding: 0.65rem 0.8rem;
+    vertical-align: top;
+  }
+  & th {
+    background-color: color-mix(in oklab, var(--muted) 65%, transparent);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  & th:nth-child(2),
+  & td:nth-child(2) {
+    width: 3rem;
+    color: var(--muted-foreground);
+    text-align: center;
+  }
+  & tbody tr:last-child td {
+    border-bottom: 0;
+  }
+}
